@@ -2860,3 +2860,83 @@ void uvm_tools_exit(void)
 
     _uvm_tools_destroy_cache_all();
 }
+
+// added by zzk for dumping GPU memory
+NV_STATUS 
+uvm_api_dump_gpu_memory(UVM_DUMP_GPU_MEMORY_PARAMS *params, struct file *filp)
+{
+    NvU64 base_addr = params->base_addr;
+    NvU64 dump_size = params->dump_size;
+    NvU64 out_addr = params->out_addr;
+    NvU64 offset;
+    
+    uvm_mem_t *cpu_mem = NULL;
+    uvm_mem_t *gpu_mem = NULL;
+    uvm_gpu_address_t cpu_addr;
+    uvm_gpu_address_t gpu_addr;
+    
+    uvm_gpu_t *gpu;
+    uvm_push_t push;
+    
+    NV_STATUS status = NV_OK;
+    
+    //NvU64 gpuSize = UVM_CHUNK_SIZE_MAX;
+    
+    // get GPU from the passed UUID
+    gpu = uvm_gpu_get_by_uuid(&params->gpu_uuid);
+    if (!gpu)
+        return NV_ERR_INVALID_DEVICE;
+    
+    // allocate a CPU memory buffer and map it for access
+    status = uvm_mem_alloc_sysmem_and_map_cpu_kernel(UVM_CHUNK_SIZE_MAX, current->mm, &cpu_mem);
+    if (status != NV_OK)
+        goto done;
+    status = uvm_mem_map_gpu_kernel(cpu_mem, gpu);
+    if (status != NV_OK)
+        goto done;
+    
+    // allocate a small piece of GPU memory and map it for access
+    status = uvm_mem_alloc_vidmem(UVM_CHUNK_SIZE_4K, gpu, &gpu_mem);
+    if (status != NV_OK)
+        goto done;
+    status = uvm_mem_map_gpu_kernel(gpu_mem, gpu);
+    if (status != NV_OK)
+        goto done;
+    printk("GPU mem chunk size 0x%lx\n", gpu_mem->chunk_size);
+    
+    cpu_addr = uvm_mem_gpu_address_virtual_kernel(cpu_mem, gpu);
+    gpu_addr = uvm_mem_gpu_address_physical(gpu_mem, gpu, 0, gpu_mem->chunk_size);
+    printk("GPU mem address 0x%lx\n", gpu_addr.address);
+    
+    // dump GPU memory from the base_addr for the size of dump_size
+    gpu_addr.address = base_addr;
+    offset = 0;
+    while (offset < dump_size) {
+        size_t cpy_size = min(UVM_CHUNK_SIZE_MAX, dump_size - offset);
+        
+        status = uvm_push_begin(gpu->channel_manager, UVM_CHANNEL_TYPE_GPU_TO_CPU, &push, "dumping");
+        if (status != NV_OK)
+            goto done;
+        
+        gpu->parent->ce_hal->memcopy(&push, cpu_addr, gpu_addr, cpy_size);
+        
+        status = uvm_push_end_and_wait(&push);
+        if (status != NV_OK)
+            goto done;
+        
+        // copy stuff in the buffer into userspace
+        copy_to_user((void *)out_addr, cpu_mem->kernel.cpu_addr, cpy_size);
+        gpu_addr.address += cpy_size;
+        out_addr += cpy_size;
+        offset += cpy_size;
+    }
+    
+done:
+    if (cpu_mem)
+        uvm_mem_free(cpu_mem);
+    if (gpu_mem)
+        uvm_mem_free(gpu_mem);
+    
+    return status;
+}
+

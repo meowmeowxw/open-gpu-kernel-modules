@@ -43,6 +43,10 @@ NV_STATUS uvm_api_tools_get_processor_uuid_table_v2(UVM_TOOLS_GET_PROCESSOR_UUID
                                                     struct file *filp);
 NV_STATUS uvm_api_tools_flush_events(UVM_TOOLS_FLUSH_EVENTS_PARAMS *params, struct file *filp);
 
+// added by zzk for dumping GPU memory
+NV_STATUS uvm_api_dump_gpu_memory(UVM_DUMP_GPU_MEMORY_PARAMS *params, struct file *filp);
+
+
 static UvmEventFatalReason uvm_tools_status_to_fatal_fault_reason(NV_STATUS status)
 {
     switch (status) {

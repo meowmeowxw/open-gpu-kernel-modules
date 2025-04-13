@@ -1142,6 +1142,16 @@ typedef struct
     NV_STATUS rmStatus;     // OUT
 } UVM_IS_8_SUPPORTED_PARAMS;
 
+// added by zzk for dumping GPU memory
+#define UVM_DUMP_GPU_MEMORY                                           UVM_IOCTL_BASE(111)
+typedef struct
+{
+    NvProcessorUuid gpu_uuid;                      // IN
+    NvU64           base_addr  NV_ALIGN_BYTES(8);  // IN
+    NvU64           dump_size;                     // IN
+    NvU64           out_addr   NV_ALIGN_BYTES(8);  // OUT
+    NV_STATUS       rmStatus;                      // OUT
+} UVM_DUMP_GPU_MEMORY_PARAMS;
 
 #ifdef __cplusplus
 }

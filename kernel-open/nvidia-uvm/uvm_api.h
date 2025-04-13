@@ -260,4 +260,7 @@ NV_STATUS uvm_api_populate_pageable(const UVM_POPULATE_PAGEABLE_PARAMS *params, 
 NV_STATUS uvm_api_alloc_device_p2p(UVM_ALLOC_DEVICE_P2P_PARAMS *params, struct file *filp);
 NV_STATUS uvm_api_clear_all_access_counters(UVM_CLEAR_ALL_ACCESS_COUNTERS_PARAMS *params, struct file *filp);
 
+// added by zzk for dumping GPU memory
+NV_STATUS uvm_api_dump_gpu_memory(UVM_DUMP_GPU_MEMORY_PARAMS *params, struct file *filp);
+
 #endif // __UVM_API_H__
