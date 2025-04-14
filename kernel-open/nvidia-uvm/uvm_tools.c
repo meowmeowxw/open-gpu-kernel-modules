@@ -2874,18 +2874,42 @@ uvm_api_dump_gpu_memory(UVM_DUMP_GPU_MEMORY_PARAMS *params, struct file *filp)
     uvm_mem_t *gpu_mem = NULL;
     uvm_gpu_address_t cpu_addr;
     uvm_gpu_address_t gpu_addr;
+    char gpu_uuid_buffer[UVM_UUID_STRING_LENGTH];
     
     uvm_gpu_t *gpu;
+    uvm_parent_gpu_t *parent_gpu;
     uvm_push_t push;
     
     NV_STATUS status = NV_OK;
     
     //NvU64 gpuSize = UVM_CHUNK_SIZE_MAX;
     
-    // get GPU from the passed UUID
-    gpu = uvm_gpu_get_by_uuid(&params->gpu_uuid);
-    if (!gpu)
-        return NV_ERR_INVALID_DEVICE;
+    uvm_uuid_string(gpu_uuid_buffer, &params->gpu_uuid);
+    if (params->child_id != -1) {
+        parent_gpu = uvm_parent_gpu_get_by_uuid(&params->gpu_uuid);
+        if (!parent_gpu) {
+            printk(KERN_ERR "uvm_api_dump_gpu_memory parent gpu not found with uuid: %s\n", gpu_uuid_buffer);
+            return NV_ERR_INVALID_DEVICE;
+
+        }
+        if (test_bit(params->child_id, parent_gpu->valid_gpus)) {
+            gpu = parent_gpu->gpus[params->child_id];
+            uvm_uuid_string(gpu_uuid_buffer, &gpu->uuid);
+            printk(KERN_INFO "uvm_api_dump_gpu_memory child gpu %d uuid: %s\n", params->child_id, gpu_uuid_buffer);
+        } else {
+            printk(KERN_ERR "uvm_api_dump_gpu_memory child gpu %d not found\n", params->child_id);
+            return NV_ERR_INVALID_DEVICE;
+
+        }
+    } else {
+        gpu = uvm_gpu_get_by_uuid(&params->gpu_uuid);
+        if (!gpu) {
+            printk(KERN_ERR "uvm_api_dump_gpu_memory gpu not found with uuid: %s\n", gpu_uuid_buffer);
+            return NV_ERR_INVALID_DEVICE;
+        } else {
+            printk(KERN_INFO "uvm_api_dump_gpu_memory gpu found with uuid: %s\n", gpu_uuid_buffer);
+        }
+    }
     
     // allocate a CPU memory buffer and map it for access
     status = uvm_mem_alloc_sysmem_and_map_cpu_kernel(UVM_CHUNK_SIZE_MAX, current->mm, &cpu_mem);

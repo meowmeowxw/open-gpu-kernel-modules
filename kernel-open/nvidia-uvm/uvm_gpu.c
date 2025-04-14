@@ -1502,6 +1502,7 @@ static NV_STATUS init_gpu(uvm_gpu_t *gpu, const UvmGpuInfo *gpu_info)
 
     uvm_uuid_copy(&gpu->uuid, &gpu_info->uuid);
     gpu->smc.swizz_id = gpu_info->smcSwizzId;
+    printk(KERN_ERR "init_gpu swizz_id: 0x%x\n", gpu->smc.swizz_id);
 
     uvm_uuid_string(parent_uuid_buffer, &gpu->parent->uuid);
     uvm_uuid_string(gi_uuid_buffer, &gpu->uuid);
@@ -1511,6 +1512,8 @@ static NV_STATUS init_gpu(uvm_gpu_t *gpu, const UvmGpuInfo *gpu_info)
              uvm_id_value(gpu->id),
              parent_uuid_buffer,
              gi_uuid_buffer);
+
+    printk(KERN_ERR "init_gpu gpu->name: %s\n", gpu->name);
 
     // Initialize the per-GPU procfs dirs as early as possible so that other
     // parts of the driver can add files in them as part of their per-GPU init.
@@ -2858,6 +2861,7 @@ static NV_STATUS gpu_retain_by_uuid_locked(const NvProcessorUuid *gpu_uuid,
     UvmGpuClientInfo client_info = {0};
     UvmGpuPlatformInfo gpu_platform_info = {0};
     uvm_gpu_id_t gpu_id;
+    char gi_uuid_buffer[UVM_UUID_STRING_LENGTH];
 
     client_info.hClient = user_rm_device->user_client;
     client_info.hSmcPartRef = user_rm_device->user_object;
@@ -2881,6 +2885,7 @@ static NV_STATUS gpu_retain_by_uuid_locked(const NvProcessorUuid *gpu_uuid,
     if (status != NV_OK)
         goto error_unregister;
 
+
     if (parent_gpu != NULL) {
         // If the UUID has been seen before, and if SMC is enabled, then check
         // if this specific partition has been seen previously. The UUID-based
@@ -2894,6 +2899,9 @@ static NV_STATUS gpu_retain_by_uuid_locked(const NvProcessorUuid *gpu_uuid,
             UVM_ASSERT(gpu != NULL);
         }
     }
+
+    uvm_uuid_string(gi_uuid_buffer, &gpu->uuid);
+    printk(KERN_ERR "gpu_retain_by_uuid_locked | gpu->uuid: %s\n", gi_uuid_buffer);
 
     if (gpu == NULL) {
         status = find_unused_gpu_id(parent_gpu, &gpu_id);

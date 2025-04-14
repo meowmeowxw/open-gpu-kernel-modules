@@ -1147,6 +1147,7 @@ typedef struct
 typedef struct
 {
     NvProcessorUuid gpu_uuid;                      // IN
+    NvS32           child_id;                      // IN
     NvU64           base_addr  NV_ALIGN_BYTES(8);  // IN
     NvU64           dump_size;                     // IN
     NvU64           out_addr   NV_ALIGN_BYTES(8);  // OUT
