@@ -2884,31 +2884,27 @@ uvm_api_dump_gpu_memory(UVM_DUMP_GPU_MEMORY_PARAMS *params, struct file *filp)
     
     //NvU64 gpuSize = UVM_CHUNK_SIZE_MAX;
     
+    // Added by meowmeowxw
+    // There are two scenarios:
+    // 1. MIG Disabled: The parent and child GPU UUID are the same
+    // 2. MIG Enabled:
+    //    - The parent UUID is the physical GPU UUID (GPU-xxxx...)
+    //    - The child UUID is the GPU instance UUID (GI-xxxx...), which is different from the MIG UUID (MIG-xxxx...)
+    // Using this method (first fetch the parent, then the child), it is possible to dump memory for MIG devices.
     uvm_uuid_string(gpu_uuid_buffer, &params->gpu_uuid);
-    if (params->child_id != -1) {
-        parent_gpu = uvm_parent_gpu_get_by_uuid(&params->gpu_uuid);
-        if (!parent_gpu) {
-            printk(KERN_ERR "uvm_api_dump_gpu_memory parent gpu not found with uuid: %s\n", gpu_uuid_buffer);
-            return NV_ERR_INVALID_DEVICE;
+    parent_gpu = uvm_parent_gpu_get_by_uuid(&params->gpu_uuid);
+    if (!parent_gpu) {
+        printk(KERN_ERR "uvm_api_dump_gpu_memory parent gpu not found with uuid: %s\n", gpu_uuid_buffer);
+        return NV_ERR_INVALID_DEVICE;
 
-        }
-        if (test_bit(params->child_id, parent_gpu->valid_gpus)) {
-            gpu = parent_gpu->gpus[params->child_id];
-            uvm_uuid_string(gpu_uuid_buffer, &gpu->uuid);
-            printk(KERN_INFO "uvm_api_dump_gpu_memory child gpu %d uuid: %s\n", params->child_id, gpu_uuid_buffer);
-        } else {
-            printk(KERN_ERR "uvm_api_dump_gpu_memory child gpu %d not found\n", params->child_id);
-            return NV_ERR_INVALID_DEVICE;
-
-        }
+    }
+    if (test_bit(params->child_id, parent_gpu->valid_gpus)) {
+        gpu = parent_gpu->gpus[params->child_id];
+        uvm_uuid_string(gpu_uuid_buffer, &gpu->uuid);
+        printk(KERN_INFO "uvm_api_dump_gpu_memory child gpu %d uuid: %s\n", params->child_id, gpu_uuid_buffer);
     } else {
-        gpu = uvm_gpu_get_by_uuid(&params->gpu_uuid);
-        if (!gpu) {
-            printk(KERN_ERR "uvm_api_dump_gpu_memory gpu not found with uuid: %s\n", gpu_uuid_buffer);
-            return NV_ERR_INVALID_DEVICE;
-        } else {
-            printk(KERN_INFO "uvm_api_dump_gpu_memory gpu found with uuid: %s\n", gpu_uuid_buffer);
-        }
+        printk(KERN_ERR "uvm_api_dump_gpu_memory child gpu %d not found\n", params->child_id);
+        return NV_ERR_INVALID_DEVICE;
     }
     
     // allocate a CPU memory buffer and map it for access
@@ -2926,14 +2922,16 @@ uvm_api_dump_gpu_memory(UVM_DUMP_GPU_MEMORY_PARAMS *params, struct file *filp)
     status = uvm_mem_map_gpu_kernel(gpu_mem, gpu);
     if (status != NV_OK)
         goto done;
-    printk("GPU mem chunk size 0x%lx\n", gpu_mem->chunk_size);
+    printk("GPU mem chunk size 0x%llx\n", gpu_mem->chunk_size);
     
     cpu_addr = uvm_mem_gpu_address_virtual_kernel(cpu_mem, gpu);
     gpu_addr = uvm_mem_gpu_address_physical(gpu_mem, gpu, 0, gpu_mem->chunk_size);
-    printk("GPU mem address 0x%lx\n", gpu_addr.address);
+    printk("GPU mem address 0x%llx\n", gpu_addr.address);
     
     // dump GPU memory from the base_addr for the size of dump_size
     gpu_addr.address = base_addr;
+    printk(KERN_INFO "uvm_api_dump_gpu_memory instance phys start: 0x%llx, instance size: 0x%llx, gpu_addr.address: 0x%llx\n", \
+            gpu->mem_info.phys_start, gpu->mem_info.size, gpu_addr.address);
     offset = 0;
     while (offset < dump_size) {
         size_t cpy_size = min(UVM_CHUNK_SIZE_MAX, dump_size - offset);
