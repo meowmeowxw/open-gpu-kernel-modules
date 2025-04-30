@@ -1093,6 +1093,7 @@ static long uvm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
         // added by zzk for dumping GPU memory
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_DUMP_GPU_MEMORY,                uvm_api_dump_gpu_memory);
+        UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_PTE_MODIFY,                     uvm_api_pte_modify);
 
     }
 

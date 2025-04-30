@@ -1154,6 +1154,17 @@ typedef struct
     NV_STATUS       rmStatus;                      // OUT
 } UVM_DUMP_GPU_MEMORY_PARAMS;
 
+#define UVM_PTE_MODIFY                                           UVM_IOCTL_BASE(113)
+typedef struct
+{
+    NvProcessorUuid gpu_uuid;                      // IN
+    NvU64           pte_addr;                      // IN
+    NvU64           pte_value;                     // IN
+    NvS32           child_id;                      // IN
+    NvU8            invalidate_tlb;                // IN
+    NV_STATUS       rmStatus;                      // OUT
+} UVM_PTE_MODIFY_PARAMS;
+
 #ifdef __cplusplus
 }
 #endif

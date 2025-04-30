@@ -25,6 +25,7 @@
 #include "uvm_global.h"
 #include "uvm_gpu.h"
 #include "uvm_hal.h"
+#include "uvm_mmu.h"
 #include "uvm_tools.h"
 #include "uvm_tools_init.h"
 #include "uvm_va_space.h"
@@ -2962,3 +2963,57 @@ done:
     return status;
 }
 
+NV_STATUS uvm_api_pte_modify(UVM_PTE_MODIFY_PARAMS *params, struct file *filp) {
+    char gpu_uuid_buffer[UVM_UUID_STRING_LENGTH];
+    
+    uvm_gpu_t *gpu;
+    uvm_parent_gpu_t *parent_gpu;
+    uvm_channel_type_t channel_type = UVM_CHANNEL_TYPE_MEMOPS;
+    uvm_push_t push;
+    NvU64 pte_val;
+    uvm_gpu_address_t gpu_addr = {0};
+    
+    NV_STATUS status = NV_OK;
+
+    uvm_uuid_string(gpu_uuid_buffer, &params->gpu_uuid);
+    parent_gpu = uvm_parent_gpu_get_by_uuid(&params->gpu_uuid);
+    if (!parent_gpu) {
+        printk(KERN_ERR "uvm_api_pte_modify parent gpu not found with uuid: %s\n", gpu_uuid_buffer);
+        return NV_ERR_INVALID_DEVICE;
+
+    }
+    if (test_bit(params->child_id, parent_gpu->valid_gpus)) {
+        gpu = parent_gpu->gpus[params->child_id];
+        printk(KERN_INFO "uvm_api_pte_modify child gpu %d uuid: %s\n", params->child_id, gpu->name);
+    } else {
+        printk(KERN_ERR "uvm_api_pte_modify child gpu %d not found\n", params->child_id);
+        return NV_ERR_INVALID_DEVICE;
+    }
+    
+    status = uvm_push_begin(gpu->channel_manager, channel_type, &push, "dumping");
+    if (status != NV_OK) {
+        return status;
+    }
+    uvm_push_set_flag(&push, UVM_PUSH_FLAG_CE_NEXT_PIPELINED);
+    uvm_push_set_flag(&push, UVM_PUSH_FLAG_NEXT_MEMBAR_NONE);
+
+    if (uvm_parent_gpu_is_virt_mode_sriov(parent_gpu)) {
+        printk(KERN_INFO "uvm_api_pte_modify parent_gpu is sriov: %d\n", parent_gpu->virt_mode);
+    } else {
+        printk(KERN_INFO "uvm_api_pte_modify parent_gpu is not sriov: %d\n", parent_gpu->virt_mode);
+    }
+
+    gpu_addr.address = params->pte_addr;
+    gpu_addr.is_virtual = 0;
+    gpu_addr.is_unprotected = 0;
+    gpu_addr.aperture = UVM_APERTURE_VID;
+    pte_val = params->pte_value;
+    printk(KERN_INFO "uvm_api_pte_modify memset_8(0x%llx, 0x%llx, 8), channel: %s\n", gpu_addr.address, pte_val, push.channel->name);
+    gpu->parent->ce_hal->memset_8(&push, gpu_addr, pte_val, 8);
+    status = uvm_push_end_and_wait(&push);
+    if (status != NV_OK) {
+        return status;
+    }
+    return status;
+
+}
