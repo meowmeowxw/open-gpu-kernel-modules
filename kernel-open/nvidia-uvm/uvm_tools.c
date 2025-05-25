@@ -2910,6 +2910,7 @@ uvm_api_dump_gpu_memory(UVM_DUMP_GPU_MEMORY_PARAMS *params, struct file *filp)
     
     // allocate a CPU memory buffer and map it for access
     status = uvm_mem_alloc_sysmem_and_map_cpu_kernel(UVM_CHUNK_SIZE_MAX, current->mm, &cpu_mem);
+    printk(KERN_INFO "uvm_mem_alloc_sysmem_and_map_cpu_kernel done\n");
     if (status != NV_OK)
         goto done;
     status = uvm_mem_map_gpu_kernel(cpu_mem, gpu);
@@ -2930,9 +2931,9 @@ uvm_api_dump_gpu_memory(UVM_DUMP_GPU_MEMORY_PARAMS *params, struct file *filp)
     printk("GPU mem address 0x%llx\n", gpu_addr.address);
     
     // dump GPU memory from the base_addr for the size of dump_size
+    printk(KERN_INFO "uvm_api_dump_gpu_memory instance phys start: 0x%llx, instance size: 0x%llx, gpu_addr.address: 0x%llx, cpu_addr: 0x%llx, cpu_mem.kernel: 0x%llx\n", \
+            gpu->mem_info.phys_start, gpu->mem_info.size, gpu_addr.address, cpu_addr.address, cpu_mem->kernel.cpu_addr);
     gpu_addr.address = base_addr;
-    printk(KERN_INFO "uvm_api_dump_gpu_memory instance phys start: 0x%llx, instance size: 0x%llx, gpu_addr.address: 0x%llx\n", \
-            gpu->mem_info.phys_start, gpu->mem_info.size, gpu_addr.address);
     offset = 0;
     while (offset < dump_size) {
         size_t cpy_size = min(UVM_CHUNK_SIZE_MAX, dump_size - offset);
@@ -2989,13 +2990,6 @@ NV_STATUS uvm_api_pte_modify(UVM_PTE_MODIFY_PARAMS *params, struct file *filp) {
         printk(KERN_ERR "uvm_api_pte_modify child gpu %d not found\n", params->child_id);
         return NV_ERR_INVALID_DEVICE;
     }
-    
-    status = uvm_push_begin(gpu->channel_manager, channel_type, &push, "dumping");
-    if (status != NV_OK) {
-        return status;
-    }
-    uvm_push_set_flag(&push, UVM_PUSH_FLAG_CE_NEXT_PIPELINED);
-    uvm_push_set_flag(&push, UVM_PUSH_FLAG_NEXT_MEMBAR_NONE);
 
     if (uvm_parent_gpu_is_virt_mode_sriov(parent_gpu)) {
         printk(KERN_INFO "uvm_api_pte_modify parent_gpu is sriov: %d\n", parent_gpu->virt_mode);
@@ -3003,17 +2997,29 @@ NV_STATUS uvm_api_pte_modify(UVM_PTE_MODIFY_PARAMS *params, struct file *filp) {
         printk(KERN_INFO "uvm_api_pte_modify parent_gpu is not sriov: %d\n", parent_gpu->virt_mode);
     }
 
+    
+    status = uvm_push_begin(gpu->channel_manager, channel_type, &push, "dumping");
+    if (status != NV_OK) {
+        return status;
+    }
+    // uvm_push_set_flag(&push, UVM_PUSH_FLAG_CE_NEXT_PIPELINED);
+    // uvm_push_set_flag(&push, UVM_PUSH_FLAG_NEXT_MEMBAR_NONE);
+
     gpu_addr.address = params->pte_addr;
     gpu_addr.is_virtual = 0;
     gpu_addr.is_unprotected = 0;
     gpu_addr.aperture = UVM_APERTURE_VID;
     pte_val = params->pte_value;
-    printk(KERN_INFO "uvm_api_pte_modify memset_8(0x%llx, 0x%llx, 8), channel: %s\n", gpu_addr.address, pte_val, push.channel->name);
-    gpu->parent->ce_hal->memset_8(&push, gpu_addr, pte_val, 8);
+
+    uvm_pte_batch_t batch;
+    uvm_pte_batch_begin(&push, &batch);
+    printk(KERN_INFO "uvm_api_pte_modify write_pte(&batch, 0x%llx, 0x%llx, 8), channel: %s\n", gpu_addr.address, pte_val, push.channel->name);
+    uvm_pte_batch_write_pte(&batch, uvm_gpu_phys_address(gpu_addr.aperture, gpu_addr.address), pte_val, 8);
+    uvm_pte_batch_end(&batch);
+    // gpu->parent->ce_hal->memset_8(&push, gpu_addr, pte_val, 8);
     status = uvm_push_end_and_wait(&push);
     if (status != NV_OK) {
         return status;
     }
     return status;
-
 }
