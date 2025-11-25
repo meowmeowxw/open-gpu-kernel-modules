@@ -1160,6 +1160,7 @@ typedef struct
     NvProcessorUuid gpu_uuid;                      // IN
     NvU64           pte_addr;                      // IN
     NvU64           pte_value;                     // IN
+    NvU64           pdb_addr;                      // IN
     NvS32           child_id;                      // IN
     NvU8            invalidate_tlb;                // IN
     NV_STATUS       rmStatus;                      // OUT

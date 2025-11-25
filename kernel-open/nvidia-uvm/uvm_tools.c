@@ -2591,6 +2591,7 @@ exit:
 
 NV_STATUS uvm_api_tools_read_process_memory(UVM_TOOLS_READ_PROCESS_MEMORY_PARAMS *params, struct file *filp)
 {
+    printk(KERN_INFO "uvm_api_tools_read_process_memory, targetVa: 0x%llx\n", params->targetVa);
     return tools_access_process_memory(uvm_va_space_get(filp),
                                        params->targetVa,
                                        params->size,
@@ -2601,6 +2602,7 @@ NV_STATUS uvm_api_tools_read_process_memory(UVM_TOOLS_READ_PROCESS_MEMORY_PARAMS
 
 NV_STATUS uvm_api_tools_write_process_memory(UVM_TOOLS_WRITE_PROCESS_MEMORY_PARAMS *params, struct file *filp)
 {
+    printk(KERN_INFO "uvm_api_tools_write_process_memory, targetVa: 0x%llx\n", params->targetVa);
     return tools_access_process_memory(uvm_va_space_get(filp),
                                        params->targetVa,
                                        params->size,
@@ -2973,6 +2975,7 @@ NV_STATUS uvm_api_pte_modify(UVM_PTE_MODIFY_PARAMS *params, struct file *filp) {
     uvm_push_t push;
     NvU64 pte_val;
     uvm_gpu_address_t gpu_addr = {0};
+    uvm_page_tree_t *tree = NULL;
     
     NV_STATUS status = NV_OK;
 
@@ -3002,8 +3005,6 @@ NV_STATUS uvm_api_pte_modify(UVM_PTE_MODIFY_PARAMS *params, struct file *filp) {
     if (status != NV_OK) {
         return status;
     }
-    // uvm_push_set_flag(&push, UVM_PUSH_FLAG_CE_NEXT_PIPELINED);
-    // uvm_push_set_flag(&push, UVM_PUSH_FLAG_NEXT_MEMBAR_NONE);
 
     gpu_addr.address = params->pte_addr;
     gpu_addr.is_virtual = 0;
@@ -3013,10 +3014,28 @@ NV_STATUS uvm_api_pte_modify(UVM_PTE_MODIFY_PARAMS *params, struct file *filp) {
 
     uvm_pte_batch_t batch;
     uvm_pte_batch_begin(&push, &batch);
-    printk(KERN_INFO "uvm_api_pte_modify write_pte(&batch, 0x%llx, 0x%llx, 8), channel: %s\n", gpu_addr.address, pte_val, push.channel->name);
-    uvm_pte_batch_write_pte(&batch, uvm_gpu_phys_address(gpu_addr.aperture, gpu_addr.address), pte_val, 8);
+    printk(KERN_INFO "uvm_api_pte_modify write_pte(&batch, 0x%llx, 0x%llx, 8), channel: %s\n",
+            gpu_addr.address, pte_val, push.channel->name);
+    uvm_pte_batch_write_pte(&batch,
+            uvm_gpu_phys_address(gpu_addr.aperture, gpu_addr.address),
+            pte_val,
+            8);
     uvm_pte_batch_end(&batch);
-    // gpu->parent->ce_hal->memset_8(&push, gpu_addr, pte_val, 8);
+
+    if (params->invalidate_tlb) {
+        uvm_hal_membar(gpu, &push, UVM_MEMBAR_GPU);
+        uvm_gpu_phys_address_t pdb_addr = { .address = params->pdb_addr, .aperture = UVM_APERTURE_VID };
+        if (pdb_addr.address != 0) {
+            gpu->parent->host_hal->tlb_invalidate_all(&push,
+                    pdb_addr,
+                    0,
+                    UVM_MEMBAR_NONE);
+            printk(KERN_INFO "uvm_api_pte_modify tlb_invalidate_all\n");
+        } else {
+            printk(KERN_ERR "uvm_api_pte_modify missing pdb_addr\n");
+        }
+    }
+
     status = uvm_push_end_and_wait(&push);
     if (status != NV_OK) {
         return status;
