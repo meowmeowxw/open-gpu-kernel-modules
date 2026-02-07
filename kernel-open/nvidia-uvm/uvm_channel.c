@@ -38,6 +38,7 @@
 #include "nv_uvm_interface.h"
 #include "clb06f.h"
 #include "uvm_conf_computing.h"
+#include "nkd_hook.h"
 
 
 // WLC push is decrypted by SEC2 or CE (in WLC schedule).
@@ -1504,6 +1505,10 @@ void uvm_channel_end_push(uvm_push_t *push)
     bool needs_sec2_work_submit = false;
 
     channel_pool_lock(channel->pool);
+
+    if (READ_ONCE(nkd_enabled))
+        nkd_capture_push(push);
+
     encrypt_push(push);
 
     new_tracking_value = ++channel->tracking_sem.queued_value;
