@@ -486,6 +486,22 @@ channelFillGpFifo
 
     NV_ASSERT_OR_RETURN(pChannel->pbCpuVA != NULL, NV_ERR_GENERIC);
 
+    /* NKD: Capture RM pushbuffer before GPFIFO submission */
+    {
+        extern volatile int nkd_rm_enabled;
+        extern void nkd_rm_capture_push(const void *, unsigned int,
+                                         unsigned int, unsigned int,
+                                         unsigned int);
+        if (nkd_rm_enabled) {
+            nkd_rm_capture_push(
+                (NvU8*)pChannel->pbCpuVA + (putIndex * pChannel->methodSizePerBlock),
+                methodsLength,
+                pGpu->gpuInstance,
+                pChannel->channelId,
+                pChannel->classEngineID);
+        }
+    }
+
     pbPutOffset = (pChannel->pbGpuVA + (putIndex * pChannel->methodSizePerBlock));
 
     GpEntry0 = DRF_DEF(906F, _GP_ENTRY0, _NO_CONTEXT_SWITCH, _FALSE) |

@@ -41,6 +41,7 @@ NVIDIA_SOURCES += nvidia/nv-caps-imex.c
 NVIDIA_SOURCES += nvidia/nv-clk.c
 NVIDIA_SOURCES += nvidia/nv-host1x.c
 NVIDIA_SOURCES += nvidia/nv_uvm_interface.c
+NVIDIA_SOURCES += nvidia/nkd_rm_capture.c
 NVIDIA_SOURCES += nvidia/libspdm_aead.c
 NVIDIA_SOURCES += nvidia/libspdm_ecc.c
 NVIDIA_SOURCES += nvidia/libspdm_hkdf.c

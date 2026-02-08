@@ -986,6 +986,12 @@ static int __init nvidia_init_module(void)
 
     __nv_init_sp = sp;
 
+    /* NKD: Initialize RM push capture (non-fatal if it fails) */
+    {
+        extern int nkd_rm_init(void);
+        nkd_rm_init();
+    }
+
     return 0;
 
 partial_chrdev_exit:
@@ -1018,6 +1024,12 @@ procfs_exit:
 static void __exit nvidia_exit_module(void)
 {
     nvidia_stack_t *sp = __nv_init_sp;
+
+    /* NKD: Cleanup RM push capture */
+    {
+        extern void nkd_rm_cleanup(void);
+        nkd_rm_cleanup();
+    }
 
     nv_unregister_chrdev(NV_MINOR_DEVICE_NUMBER_CONTROL_DEVICE, 1,
         &nv_linux_control_device_cdev);
