@@ -5,46 +5,24 @@
  * in nvidia.ko. Uses a separate relay channel under /sys/kernel/debug/nkd_rm/
  * independent from the UVM relay in nvidia-uvm.ko.
  *
- * Record format matches struct nkd_push_record (v2, 48-byte header)
- * defined in kernel/nkd_relay.h and userspace/nkd_types.h.
+ * Record format is struct nkd_push_record defined in nkd_common.h (shared with UVM).
  */
 
 #include <linux/relay.h>
 #include <linux/debugfs.h>
 #include <linux/module.h>
 #include <linux/slab.h>
-#include <linux/ktime.h>
-#include <linux/atomic.h>
-#include <linux/sched.h>
 #include <linux/percpu.h>
 
+#include "../nkd_common.h"
 #include "nkd_rm_capture.h"
-
-/* Source identifier for RM records */
-#define NKD_SOURCE_RM  1
-
-/* Record header layout — must match userspace/nkd_types.h */
-struct nkd_rm_record {
-    u64  timestamp_ns;
-    u32  gpu_id;
-    u32  channel_id;
-    u32  push_size;
-    u32  pid;
-    char comm[16];
-    u8   source;
-    u8   padding[3];
-    u32  class_id;
-    /* followed by push data */
-};
-
-#define NKD_RM_HDR_SIZE  sizeof(struct nkd_rm_record)  /* 48 bytes */
 
 /*
  * RM pushes are small: methodSizePerBlock = 0x68 (104 bytes).
  * Scratch buffer = header + max push data.
  */
 #define NKD_RM_MAX_PUSH_SIZE  256  /* generous headroom beyond 104 */
-#define NKD_RM_SCRATCH_SIZE   (NKD_RM_HDR_SIZE + NKD_RM_MAX_PUSH_SIZE)
+#define NKD_RM_SCRATCH_SIZE   (NKD_RECORD_HDR_SIZE + NKD_RM_MAX_PUSH_SIZE)
 
 /* Relay: 64 subbuffers x 16KB = 1MB per CPU (RM is infrequent) */
 #define NKD_RM_SUBBUF_SIZE    (16 * 1024)
@@ -143,7 +121,7 @@ static const struct file_operations nkd_rm_stats_fops = {
 void nkd_rm_capture_push(const void *methods, u32 size,
                           u32 gpu_id, u32 channel_id, u32 class_id)
 {
-    struct nkd_rm_record *rec;
+    struct nkd_push_record *rec;
     size_t record_size;
     u8 *scratch;
 
@@ -152,7 +130,7 @@ void nkd_rm_capture_push(const void *methods, u32 size,
         return;
     }
 
-    record_size = NKD_RM_HDR_SIZE + size;
+    record_size = NKD_RECORD_HDR_SIZE + size;
 
     scratch = get_cpu_var(nkd_rm_scratch_buf);
     if (unlikely(!scratch)) {
@@ -161,19 +139,10 @@ void nkd_rm_capture_push(const void *methods, u32 size,
         return;
     }
 
-    rec = (struct nkd_rm_record *)scratch;
-    rec->timestamp_ns = ktime_get_ns();
-    rec->gpu_id       = gpu_id;
-    rec->channel_id   = channel_id;
-    rec->push_size    = size;
-    rec->pid          = current->pid;
-    memcpy(rec->comm, current->comm, sizeof(rec->comm));
-    rec->source       = NKD_SOURCE_RM;
-    rec->padding[0]   = 0;
-    rec->padding[1]   = 0;
-    rec->padding[2]   = 0;
-    rec->class_id     = class_id;
-    memcpy(scratch + NKD_RM_HDR_SIZE, methods, size);
+    rec = (struct nkd_push_record *)scratch;
+    nkd_fill_record_header(rec, gpu_id, channel_id, size,
+                           NKD_SOURCE_RM, class_id);
+    memcpy(scratch + NKD_RECORD_HDR_SIZE, methods, size);
 
     if (likely(nkd_rm_rchan))
         relay_write(nkd_rm_rchan, scratch, record_size);

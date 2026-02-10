@@ -10,6 +10,7 @@
 #include <linux/ktime.h>
 #include <linux/slab.h>
 #include <linux/atomic.h>
+#include <linux/sched.h>
 
 #include "nkd_hook.h"
 #include "nkd_relay.h"
@@ -33,7 +34,7 @@ static struct dentry *nkd_stats_file;
 /*
  * Scratch buffer for assembling records before relay_write().
  * Max UVM push is UVM_MAX_PUSH_SIZE (currently ~16KB).
- * Header + max push ≈ 24 + 16384 = ~16.4KB.
+ * Header + max push ≈ 48 + 16384 = ~16.4KB.
  * We use a per-CPU buffer to avoid allocations in the hot path.
  */
 #define NKD_SCRATCH_SIZE  (NKD_RECORD_HDR_SIZE + UVM_MAX_PUSH_SIZE)
@@ -122,11 +123,12 @@ void nkd_capture_push(uvm_push_t *push)
     }
 
     rec = (struct nkd_push_record *)scratch;
-    rec->timestamp_ns = ktime_get_ns();
-    rec->gpu_id       = uvm_id_value(gpu->id);
-    rec->channel_id   = channel->channel_info.hwChannelId;
-    rec->push_size    = push_size;
-    rec->reserved     = 0;
+    nkd_fill_record_header(rec,
+                           uvm_id_value(gpu->id),
+                           channel->channel_info.hwChannelId,
+                           push_size,
+                           NKD_SOURCE_UVM,
+                           0);  /* UVM class determined by subchannel in decoder */
     memcpy(rec->pushbuffer_data, push->begin, push_size);
 
     nkd_relay_write(scratch, record_size);
