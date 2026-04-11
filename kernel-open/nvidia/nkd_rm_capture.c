@@ -9,10 +9,13 @@
  */
 
 #include <linux/relay.h>
+#include <linux/atomic.h>
 #include <linux/debugfs.h>
+#include <linux/jiffies.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/percpu.h>
+#include <linux/workqueue.h>
 
 #include "../nkd_common.h"
 #include "nkd_rm_capture.h"
@@ -27,6 +30,7 @@
 /* Relay: 64 subbuffers x 16KB = 1MB per CPU (RM is infrequent) */
 #define NKD_RM_SUBBUF_SIZE    (16 * 1024)
 #define NKD_RM_N_SUBBUFS      64
+#define NKD_RM_FLUSH_DELAY_MS 20
 
 /* Global enable flag */
 int nkd_rm_enabled;
@@ -35,10 +39,17 @@ int nkd_rm_enabled;
 static atomic64_t nkd_rm_total_pushes = ATOMIC64_INIT(0);
 static atomic64_t nkd_rm_total_bytes  = ATOMIC64_INIT(0);
 static atomic64_t nkd_rm_dropped      = ATOMIC64_INIT(0);
+static atomic64_t nkd_rm_flushes      = ATOMIC64_INIT(0);
+static atomic64_t nkd_rm_resets       = ATOMIC64_INIT(0);
+static atomic_t nkd_rm_flush_queued   = ATOMIC_INIT(0);
+static atomic_t nkd_rm_flush_dirty    = ATOMIC_INIT(0);
 
 /* Relay and debugfs */
 static struct rchan  *nkd_rm_rchan;
 static struct dentry *nkd_rm_debugfs_dir;
+static struct dentry *nkd_rm_flush_file;
+static struct dentry *nkd_rm_reset_file;
+static struct delayed_work nkd_rm_flush_work;
 
 /* Per-CPU scratch buffers */
 static DEFINE_PER_CPU(u8 *, nkd_rm_scratch_buf);
@@ -67,6 +78,56 @@ static const struct rchan_callbacks nkd_rm_relay_cbs = {
     .remove_buf_file = nkd_rm_remove_buf_file,
 };
 
+static void nkd_rm_flush_worker(struct work_struct *work)
+{
+    atomic_set(&nkd_rm_flush_queued, 0);
+    if (!atomic_xchg(&nkd_rm_flush_dirty, 0))
+        return;
+
+    if (!nkd_rm_rchan)
+        return;
+
+    relay_flush(nkd_rm_rchan);
+    atomic64_inc(&nkd_rm_flushes);
+
+    if (atomic_read(&nkd_rm_flush_dirty) &&
+        atomic_xchg(&nkd_rm_flush_queued, 1) == 0) {
+        queue_delayed_work(system_unbound_wq, &nkd_rm_flush_work,
+                           msecs_to_jiffies(NKD_RM_FLUSH_DELAY_MS));
+    }
+}
+
+static void nkd_rm_schedule_flush(void)
+{
+    atomic_set(&nkd_rm_flush_dirty, 1);
+    if (atomic_xchg(&nkd_rm_flush_queued, 1) == 0) {
+        queue_delayed_work(system_unbound_wq, &nkd_rm_flush_work,
+                           msecs_to_jiffies(NKD_RM_FLUSH_DELAY_MS));
+    }
+}
+
+static void nkd_rm_flush_now(void)
+{
+    if (!nkd_rm_rchan)
+        return;
+
+    relay_flush(nkd_rm_rchan);
+    atomic_set(&nkd_rm_flush_dirty, 0);
+    atomic64_inc(&nkd_rm_flushes);
+}
+
+static void nkd_rm_reset_now(void)
+{
+    if (!nkd_rm_rchan)
+        return;
+
+    cancel_delayed_work_sync(&nkd_rm_flush_work);
+    atomic_set(&nkd_rm_flush_queued, 0);
+    atomic_set(&nkd_rm_flush_dirty, 0);
+    relay_reset(nkd_rm_rchan);
+    atomic64_inc(&nkd_rm_resets);
+}
+
 /* ---- Debugfs: enabled ---- */
 
 static ssize_t nkd_rm_enabled_read(struct file *file, char __user *buf,
@@ -94,6 +155,38 @@ static const struct file_operations nkd_rm_enabled_fops = {
     .write = nkd_rm_enabled_write,
 };
 
+static ssize_t nkd_rm_flush_write(struct file *file, const char __user *buf,
+                                  size_t count, loff_t *ppos)
+{
+    int val;
+
+    if (kstrtoint_from_user(buf, count, 10, &val))
+        return -EINVAL;
+    if (val)
+        nkd_rm_flush_now();
+    return count;
+}
+
+static ssize_t nkd_rm_reset_write(struct file *file, const char __user *buf,
+                                  size_t count, loff_t *ppos)
+{
+    int val;
+
+    if (kstrtoint_from_user(buf, count, 10, &val))
+        return -EINVAL;
+    if (val)
+        nkd_rm_reset_now();
+    return count;
+}
+
+static const struct file_operations nkd_rm_flush_fops = {
+    .write = nkd_rm_flush_write,
+};
+
+static const struct file_operations nkd_rm_reset_fops = {
+    .write = nkd_rm_reset_write,
+};
+
 /* ---- Debugfs: stats ---- */
 
 static ssize_t nkd_rm_stats_read(struct file *file, char __user *buf,
@@ -104,10 +197,14 @@ static ssize_t nkd_rm_stats_read(struct file *file, char __user *buf,
                        "total_pushes: %lld\n"
                        "total_bytes:  %lld\n"
                        "dropped:      %lld\n"
+                       "flushes:      %lld\n"
+                       "resets:       %lld\n"
                        "enabled:      %d\n",
                        atomic64_read(&nkd_rm_total_pushes),
                        atomic64_read(&nkd_rm_total_bytes),
                        atomic64_read(&nkd_rm_dropped),
+                       atomic64_read(&nkd_rm_flushes),
+                       atomic64_read(&nkd_rm_resets),
                        READ_ONCE(nkd_rm_enabled));
     return simple_read_from_buffer(buf, count, ppos, tmp, len);
 }
@@ -144,8 +241,10 @@ void nkd_rm_capture_push(const void *methods, u32 size,
                            NKD_SOURCE_RM, class_id);
     memcpy(scratch + NKD_RECORD_HDR_SIZE, methods, size);
 
-    if (likely(nkd_rm_rchan))
+    if (likely(nkd_rm_rchan)) {
         relay_write(nkd_rm_rchan, scratch, record_size);
+        nkd_rm_schedule_flush();
+    }
 
     put_cpu_var(nkd_rm_scratch_buf);
 
@@ -196,11 +295,17 @@ int nkd_rm_init(void)
         goto err_remove_debugfs;
     }
 
+    INIT_DELAYED_WORK(&nkd_rm_flush_work, nkd_rm_flush_worker);
+
     /* Create control files */
     debugfs_create_file("enabled", 0644, nkd_rm_debugfs_dir, NULL,
                         &nkd_rm_enabled_fops);
     debugfs_create_file("stats", 0444, nkd_rm_debugfs_dir, NULL,
                         &nkd_rm_stats_fops);
+    nkd_rm_flush_file = debugfs_create_file("flush", 0200, nkd_rm_debugfs_dir,
+                                            NULL, &nkd_rm_flush_fops);
+    nkd_rm_reset_file = debugfs_create_file("reset", 0200, nkd_rm_debugfs_dir,
+                                            NULL, &nkd_rm_reset_fops);
 
     WRITE_ONCE(nkd_rm_enabled, 0);
 
@@ -224,6 +329,11 @@ void nkd_rm_cleanup(void)
     int cpu;
 
     WRITE_ONCE(nkd_rm_enabled, 0);
+    cancel_delayed_work_sync(&nkd_rm_flush_work);
+    atomic_set(&nkd_rm_flush_queued, 0);
+    atomic_set(&nkd_rm_flush_dirty, 0);
+    nkd_rm_flush_file = NULL;
+    nkd_rm_reset_file = NULL;
 
     if (nkd_rm_rchan) {
         relay_close(nkd_rm_rchan);

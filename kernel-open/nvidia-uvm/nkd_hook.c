@@ -84,10 +84,14 @@ static ssize_t nkd_stats_read(struct file *file, char __user *buf,
                    "total_pushes: %lld\n"
                    "total_bytes:  %lld\n"
                    "dropped:      %lld\n"
+                   "flushes:      %llu\n"
+                   "resets:       %llu\n"
                    "enabled:      %d\n",
                    atomic64_read(&nkd_total_pushes),
                    atomic64_read(&nkd_total_bytes),
                    atomic64_read(&nkd_dropped),
+                   nkd_relay_flush_count(),
+                   nkd_relay_reset_count(),
                    READ_ONCE(nkd_enabled));
     return simple_read_from_buffer(buf, count, ppos, tmp, len);
 }
